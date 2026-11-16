@@ -1,401 +1,342 @@
 
-// Pure validation logic: no dependencies, no network.
-// Verdicts: ALLOW | REVIEW | BLOCK.
-// ALLOW = passes an offline checksum/length test.
-// REVIEW = format looks right but cannot be fully verified offline.
-// BLOCK = fails validation.
-
 const IBAN_LENGTHS = {
-  AD: 24, AE: 23, AL: 28, AT: 20, AZ: 28, BA: 20, BE: 16, BG: 22, BH: 22, BR: 29, BY: 28, CH: 21, CR: 22, CY: 28,
-  CZ: 24, DE: 22, DK: 18, DO: 28, EE: 20, EG: 29, ES: 24, FI: 18, FO: 18, FR: 27, GB: 22, GE: 22, GI: 23, GL: 18,
-  GR: 27, GT: 28, HR: 21, HU: 28, IE: 22, IL: 23, IQ: 23, IS: 26, IT: 27, JO: 30, KW: 30, KZ: 20, LB: 28, LI: 21,
-  LT: 20, LU: 20, LV: 21, MC: 27, MD: 24, ME: 22, MK: 19, MR: 27, MT: 31, MU: 30, NL: 18, NO: 15, PK: 24, PL: 28,
-  PS: 29, PT: 25, QA: 29, RO: 24, RS: 22, SA: 24, SE: 24, SI: 19, SK: 24, SM: 27, TL: 23, TN: 24, TR: 26, UA: 29,
-  VA: 22, VG: 24, XK: 20,
+  AD: 24, AE: 23, AL: 28, AT: 20, AZ: 28, BA: 20, BE: 16,
+  BG: 22, BH: 22, BR: 29, BY: 28, CH: 21, CR: 22, CY: 28,
+  CZ: 24, DE: 22, DK: 18, DO: 28, EE: 20, ES: 24, FI: 18,
+  FO: 18, FR: 27, GB: 22, GE: 22, GI: 23, GL: 18, GR: 27,
+  GT: 28, HR: 21, HU: 28, IE: 22, IL: 23, IQ: 23, IS: 26,
+  IT: 27, JO: 30, KW: 30, KZ: 20, LB: 28, LC: 32, LI: 21,
+  LT: 20, LU: 20, LV: 21, MC: 27, MD: 24, ME: 22, MK: 19,
+  MR: 27, MT: 31, MU: 30, NL: 18, NO: 15, PK: 24, PL: 28,
+  PS: 29, PT: 25, QA: 29, RO: 24, RS: 22, SA: 24, SC: 31,
+  SE: 24, SI: 19, SK: 24, SM: 27, ST: 25, SV: 28, TL: 23,
+  TN: 24, TR: 26, UA: 29, VA: 22, VG: 24, XK: 20
 };
 
-const VAT_FORMATS = {
-  AT: /^U\d{8}$/, BE: /^[01]\d{9}$/, BG: /^\d{9,10}$/, CY: /^\d{8}[A-Z]$/, CZ: /^\d{8,10}$/, DE: /^\d{9}$/,
-  DK: /^\d{8}$/, EE: /^\d{9}$/, EL: /^\d{9}$/, ES: /^[A-Z0-9]\d{7}[A-Z0-9]$/, FI: /^\d{8}$/, FR: /^[A-Z0-9]{2}\d{9}$/,
-  HR: /^\d{11}$/, HU: /^\d{8}$/, IE: /^(\d{7}[A-Z]{1,2}|\d[A-Z+*]\d{5}[A-Z])$/, IT: /^\d{11}$/,
-  LT: /^(\d{9}|\d{12})$/, LU: /^\d{8}$/, LV: /^\d{11}$/, MT: /^\d{8}$/, NL: /^\d{9}B\d{2}$/, PL: /^\d{10}$/,
-  PT: /^\d{9}$/, RO: /^\d{2,10}$/, SE: /^\d{12}$/, SI: /^\d{8}$/, SK: /^\d{10}$/,
-  GB: /^(\d{9}|\d{12}|GD\d{3}|HA\d{3})$/, XI: /^(\d{9}|\d{12}|GD\d{3}|HA\d{3})$/,
-};
+const PUBLIC_TYPES = new Set(['SIREN', 'SIRET', 'VAT', 'BIC']);
+const LA_POSTE_SIREN = '356000000';
 
-export const normalize = (raw) =>
-  String(raw ?? '').replace(/[\s.\\\-_/]/g, '').toUpperCase();
-
-const result = (verdict, type, normalized, reasons, details = {}) => ({
-  type,
-  normalized,
-  verdict,
-  valid: verdict === 'ALLOW',
-  reasons,
-  details,
-});
-
-function mod97(str) {
-  let r = 0;
-
-  for (const ch of str) {
-    const v = ch >= 'A' ? ch.charCodeAt(0) - 55 : ch.charCodeAt(0) - 48;
-    r = (v > 9 ? r * 100 + v : r * 10 + v) % 97;
-  }
-
-  return r;
+export function normalize(raw) {
+  return String(raw ?? '')
+    .replace(/[\s._/-]/g, '')
+    .toUpperCase();
 }
 
-export function luhn(digits) {
+function mod97(value) {
+  let remainder = 0;
+  for (const char of value) {
+    const expanded = /[A-Z]/.test(char)
+      ? String(char.charCodeAt(0) - 55)
+      : char;
+    for (const digit of expanded) {
+      remainder = (remainder * 10 + Number(digit)) % 97;
+    }
+  }
+  return remainder;
+}
+
+function luhn(value) {
   let sum = 0;
+  let doubleDigit = false;
 
-  for (let i = 0; i < digits.length; i++) {
-    let d = digits.charCodeAt(digits.length - 1 - i) - 48;
+  for (let i = value.length - 1; i >= 0; i--) {
+    let digit = Number(value[i]);
 
-    if (i % 2 === 1) {
-      d *= 2;
-      if (d > 9) d -= 9;
+    if (doubleDigit) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
     }
 
-    sum += d;
+    sum += digit;
+    doubleDigit = !doubleDigit;
   }
 
   return sum % 10 === 0;
 }
 
-// Reject identifiers made entirely of zeros.
-const isAllZeros = (value) => /^0+$/.test(value);
-
-export function validateIban(raw) {
-  const n = normalize(raw);
-
-  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(n)) {
-    return result('BLOCK', 'iban', n, ['Invalid IBAN structure']);
-  }
-
-  const cc = n.slice(0, 2);
-  const expected = IBAN_LENGTHS[cc];
-
-  if (expected && n.length !== expected) {
-    return result(
-      'BLOCK',
-      'iban',
-      n,
-      [`Wrong length for ${cc}: expected ${expected}, got ${n.length}`],
-      { country: cc }
-    );
-  }
-
-  if (mod97(n.slice(4) + n.slice(0, 4)) !== 1) {
-    return result('BLOCK', 'iban', n, ['Checksum (mod 97) failed'], { country: cc });
-  }
-
-  if (!expected) {
-    return result(
-      'REVIEW',
-      'iban',
-      n,
-      ['Checksum OK but country length rule not in table'],
-      { country: cc }
-    );
-  }
-
-  return result('ALLOW', 'iban', n, [], { country: cc });
+function digitSum(value) {
+  return [...value].reduce((sum, digit) => sum + Number(digit), 0);
 }
 
-export function validateBic(raw) {
-  const n = normalize(raw);
-
-  if (!/^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(n)) {
-    return result('BLOCK', 'bic', n, ['Invalid BIC format (8 or 11 characters)']);
-  }
-
-  return result(
-    'REVIEW',
-    'bic',
-    n,
-    ['Format OK; BIC has no checksum, existence cannot be verified offline'],
-    {
-      bankCode: n.slice(0, 4),
-      country: n.slice(4, 6),
-      location: n.slice(6, 8),
-      branch: n.slice(8) || null,
-    }
-  );
+function result(type, verdict, reasons = [], details = {}) {
+  return {
+    type,
+    verdict,
+    valid: verdict === 'ALLOW',
+    reasons,
+    details
+  };
 }
 
-const LA_POSTE_SIREN = '356000000';
-const digitSum = (s) =>
-  [...s].reduce((a, c) => a + (c.charCodeAt(0) - 48), 0);
+export function validateIban(value) {
+  const iban = normalize(value);
 
-export function validateSiren(raw) {
-  const n = normalize(raw);
-
-  if (!/^\d{9}$/.test(n)) {
-    return result('BLOCK', 'siren', n, ['SIREN must be 9 digits']);
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]+$/.test(iban)) {
+    return result('IBAN', 'BLOCK', ['Invalid IBAN format']);
   }
 
-  if (isAllZeros(n)) {
-    return result('BLOCK', 'siren', n, ['SIREN cannot be all zeros']);
+  const country = iban.slice(0, 2);
+  const expectedLength = IBAN_LENGTHS[country];
+
+  if (!expectedLength) {
+    return result('IBAN', 'REVIEW', ['Unknown country IBAN length']);
   }
 
-  if (!luhn(n)) {
-    return result('BLOCK', 'siren', n, ['Luhn checksum failed']);
-  }
-
-  return result('ALLOW', 'siren', n, []);
-}
-
-export function validateSiret(raw) {
-  const n = normalize(raw);
-
-  if (!/^\d{14}$/.test(n)) {
-    return result('BLOCK', 'siret', n, ['SIRET must be 14 digits']);
-  }
-
-  const siren = n.slice(0, 9);
-
-  if (isAllZeros(siren)) {
-    return result(
-      'BLOCK',
-      'siret',
-      n,
-      ['SIRET cannot contain an all-zero SIREN']
-    );
-  }
-
-  const ok =
-    siren === LA_POSTE_SIREN
-      ? (luhn(n) || digitSum(n) % 5 === 0)
-      : luhn(n);
-
-  if (!ok) {
-    return result('BLOCK', 'siret', n, ['Luhn checksum failed']);
-  }
-
-  return result('ALLOW', 'siret', n, [], {
-    siren,
-    nic: n.slice(9),
-  });
-}
-
-export const frVatKey = (siren) =>
-  String((12 + 3 * (Number(siren) % 97)) % 97).padStart(2, '0');
-
-export function validateVat(raw) {
-  const n = normalize(raw);
-  const cc = n.slice(0, 2);
-  const body = n.slice(2);
-  const fmt = VAT_FORMATS[cc];
-
-  if (!fmt) {
-    return result('BLOCK', 'vat', n, [
-      `Unknown or unsupported VAT country prefix "${cc}"`,
-    ]);
-  }
-
-  if (!fmt.test(body)) {
-    return result('BLOCK', 'vat', n, [`Invalid ${cc} VAT number format`], {
-      country: cc,
+  if (iban.length !== expectedLength) {
+    return result('IBAN', 'BLOCK', ['Invalid IBAN length'], {
+      expectedLength,
+      actualLength: iban.length
     });
   }
 
-  if (cc === 'FR') {
-    const key = body.slice(0, 2);
-    const siren = body.slice(2);
+  const rearranged = iban.slice(4) + iban.slice(0, 4);
 
-    if (isAllZeros(siren)) {
-      return result(
-        'BLOCK',
-        'vat',
-        n,
-        ['French VAT number cannot contain an all-zero SIREN'],
-        { country: cc, siren }
-      );
+  if (mod97(rearranged) !== 1) {
+    return result('IBAN', 'BLOCK', ['IBAN checksum failed']);
+  }
+
+  return result('IBAN', 'ALLOW', [], {
+    country,
+    checksumValid: true
+  });
+}
+
+export function validateBic(value) {
+  const bic = normalize(value);
+
+  if (!/^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(bic)) {
+    return result('BIC', 'BLOCK', ['Invalid BIC format']);
+  }
+
+  return result('BIC', 'REVIEW', [
+    'BIC format looks valid, but existence cannot be verified offline'
+  ]);
+}
+
+export function validateSiren(value) {
+  const siren = normalize(value);
+
+  if (!/^\d{9}$/.test(siren)) {
+    return result('SIREN', 'BLOCK', ['SIREN must contain exactly 9 digits']);
+  }
+
+  if (/^0+$/.test(siren)) {
+    return result('SIREN', 'BLOCK', ['SIREN cannot contain only zeros']);
+  }
+
+  if (siren === LA_POSTE_SIREN) {
+    return result('SIREN', 'ALLOW', [], {
+      checksumValid: true,
+      specialCase: 'La Poste'
+    });
+  }
+
+  if (!luhn(siren)) {
+    return result('SIREN', 'BLOCK', ['SIREN Luhn checksum failed']);
+  }
+
+  return result('SIREN', 'ALLOW', [], {
+    checksumValid: true
+  });
+}
+
+export function validateSiret(value) {
+  const siret = normalize(value);
+
+  if (!/^\d{14}$/.test(siret)) {
+    return result('SIRET', 'BLOCK', ['SIRET must contain exactly 14 digits']);
+  }
+
+  const siren = siret.slice(0, 9);
+
+  if (/^0+$/.test(siren)) {
+    return result('SIRET', 'BLOCK', ['SIREN part cannot contain only zeros']);
+  }
+
+  // La Poste uses a special checksum rule.
+  if (siren === LA_POSTE_SIREN) {
+    const valid = luhn(siret) || digitSum(siret) % 5 === 0;
+
+    if (!valid) {
+      return result('SIRET', 'BLOCK', [
+        'La Poste SIRET checksum failed'
+      ]);
+    }
+
+    return result('SIRET', 'ALLOW', [], {
+      siren,
+      checksumValid: true,
+      specialCase: 'La Poste'
+    });
+  }
+
+  // Check the SIREN part independently.
+  if (!luhn(siren)) {
+    return result('SIRET', 'BLOCK', [
+      'SIREN part Luhn checksum failed'
+    ]);
+  }
+
+  // Then check the complete SIRET.
+  if (!luhn(siret)) {
+    return result('SIRET', 'BLOCK', [
+      'SIRET Luhn checksum failed'
+    ]);
+  }
+
+  return result('SIRET', 'ALLOW', [], {
+    siren,
+    checksumValid: true
+  });
+}
+
+export function validateVat(value) {
+  const vat = normalize(value);
+
+  if (!/^[A-Z]{2}[A-Z0-9]{2,13}$/.test(vat)) {
+    return result('VAT', 'BLOCK', ['Invalid VAT number format']);
+  }
+
+  const country = vat.slice(0, 2);
+  const number = vat.slice(2);
+
+  if (country === 'FR') {
+    if (!/^[A-Z0-9]{2}\d{9}$/.test(number)) {
+      return result('VAT', 'BLOCK', ['Invalid French VAT format']);
+    }
+
+    const key = number.slice(0, 2);
+    const siren = number.slice(2);
+
+    if (/^0+$/.test(siren)) {
+      return result('VAT', 'BLOCK', ['SIREN part cannot contain only zeros']);
     }
 
     if (!luhn(siren)) {
-      return result(
-        'BLOCK',
-        'vat',
-        n,
-        ['Embedded SIREN fails Luhn checksum'],
-        { country: cc, siren }
-      );
+      return result('VAT', 'BLOCK', ['French VAT SIREN checksum failed']);
     }
 
-    if (/^\d{2}$/.test(key)) {
-      if (key !== frVatKey(siren)) {
-        return result(
-          'BLOCK',
-          'vat',
-          n,
-          [`French VAT key mismatch (expected ${frVatKey(siren)})`],
-          { country: cc, siren }
-        );
-      }
+    const expectedKey = String(
+      (12 + 3 * (Number(siren) % 97)) % 97
+    ).padStart(2, '0');
 
-      return result('ALLOW', 'vat', n, [], { country: cc, siren });
+    if (key !== expectedKey) {
+      return result('VAT', 'BLOCK', ['French VAT key checksum failed']);
     }
 
-    return result(
-      'REVIEW',
-      'vat',
-      n,
-      ['Alphanumeric French VAT key cannot be verified offline'],
-      { country: cc, siren }
-    );
+    return result('VAT', 'ALLOW', [], {
+      country,
+      siren,
+      checksumValid: true
+    });
   }
 
-  return result(
-    'REVIEW',
-    'vat',
-    n,
-    ['Format OK; no offline checksum implemented for this country. Confirm existence with VIES'],
-    { country: cc }
-  );
+  return result('VAT', 'REVIEW', [
+    'Format looks plausible, but this country VAT number cannot be verified offline'
+  ], {
+    country
+  });
 }
 
-export function detectType(raw) {
-  const n = normalize(raw);
+export function detectType(value) {
+  const normalized = normalize(value);
 
-  if (
-    /^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(n) &&
-    (IBAN_LENGTHS[n.slice(0, 2)] === n.length || !VAT_FORMATS[n.slice(0, 2)])
-  ) {
-    return 'iban';
-  }
-
-  if (/^\d{14}$/.test(n)) return 'siret';
-  if (/^\d{9}$/.test(n)) return 'siren';
-
-  if (
-    VAT_FORMATS[n.slice(0, 2)] &&
-    /^[A-Z]{2}[A-Z0-9+*]{2,12}$/.test(n) &&
-    /\d/.test(n)
-  ) {
-    return 'vat';
-  }
-
-  if (/^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(n)) {
-    return 'bic';
-  }
+  if (/^[A-Z]{2}\d{2}[A-Z0-9]+$/.test(normalized)) return 'iban';
+  if (/^\d{14}$/.test(normalized)) return 'siret';
+  if (/^\d{9}$/.test(normalized)) return 'siren';
+  if (/^[A-Z]{2}[A-Z0-9]{2,13}$/.test(normalized)) return 'vat';
+  if (/^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(normalized)) return 'bic';
 
   return null;
 }
 
-const VALIDATORS = {
-  iban: validateIban,
-  bic: validateBic,
-  siren: validateSiren,
-  siret: validateSiret,
-  vat: validateVat,
-};
-
-const MAX_ITEM_LENGTH = 100;
-
 export function validateItem(input, forcedType = 'auto') {
-  const obj =
-    typeof input === 'object' && input !== null && !Array.isArray(input);
+  let value = input;
+  let type = forcedType;
 
-  const value = obj ? input.value : input;
-  const hint = obj && input.type ? input.type : forcedType;
+  if (input && typeof input === 'object' && !Array.isArray(input)) {
+    value = input.value;
+    if (input.type) type = input.type;
+  }
 
   if (typeof value !== 'string' && typeof value !== 'number') {
-    return {
-      input: null,
-      ...result('BLOCK', 'unknown', '', [
-        'Each item must be a string (or an object with a "value" string)',
-      ]),
-    };
+    return result('UNKNOWN', 'BLOCK', ['Input must be a string or number']);
   }
 
-  const text = String(value);
+  const raw = String(value).trim();
 
-  if (text.length > MAX_ITEM_LENGTH) {
-    return {
-      input: null,
-      ...result('BLOCK', 'unknown', '', [
-        `Item longer than ${MAX_ITEM_LENGTH} characters`,
-      ]),
-    };
+  if (!raw || raw.length > 100) {
+    return result('UNKNOWN', 'BLOCK', ['Input is empty or too long']);
   }
 
-  if (hint && hint !== 'auto' && !VALIDATORS[hint]) {
-    return {
-      input: text,
-      ...result('BLOCK', 'unknown', normalize(text), [
-        `Unsupported type "${String(hint).slice(0, 20)}"`,
-      ]),
-    };
-  }
+  const normalized = normalize(raw);
 
-  const type = hint && hint !== 'auto' ? hint : detectType(text);
+  if (type === 'auto') {
+    type = detectType(normalized);
+  }
 
   if (!type) {
-    return {
-      input: text,
-      ...result('BLOCK', 'unknown', normalize(text), [
-        'Could not recognise the identifier type',
-      ]),
-    };
+    return result('UNKNOWN', 'REVIEW', ['Could not automatically detect identifier type']);
   }
+
+  switch (type.toLowerCase()) {
+    case 'iban':
+      return validateIban(normalized);
+    case 'bic':
+      return validateBic(normalized);
+    case 'siren':
+      return validateSiren(normalized);
+    case 'siret':
+      return validateSiret(normalized);
+    case 'vat':
+      return validateVat(normalized);
+    default:
+      return result('UNKNOWN', 'BLOCK', ['Unsupported identifier type']);
+  }
+}
+
+export function maskValue(value) {
+  const text = String(value ?? '');
+
+  if (text.length <= 8) return '*'.repeat(text.length);
+
+  return `${text.slice(0, 4)}${'*'.repeat(text.length - 8)}${text.slice(-4)}`;
+}
+
+export function toOutput(validation, index, options = {}) {
+  const maskSensitive = options.maskSensitive !== false;
+  const rawInput = String(validation.input ?? '');
+  const shouldMask = maskSensitive && validation.type === 'IBAN';
 
   return {
-    input: text,
-    ...VALIDATORS[type](text),
-  };
-}
-
-// Privacy: IBANs and unrecognised identifiers are masked by default.
-export function maskValue(value) {
-  const n = normalize(value);
-
-  if (n.length <= 8) return '*'.repeat(n.length);
-
-  return n.slice(0, 4) + '*'.repeat(n.length - 8) + n.slice(-4);
-}
-
-const PUBLIC_TYPES = new Set(['siren', 'siret', 'vat', 'bic']);
-
-export function toOutput(r, index, { maskSensitive = true } = {}) {
-  const out = {
     index,
-    input: r.input,
-    type: r.type,
-    normalized: r.normalized,
-    verdict: r.verdict,
-    valid: r.valid,
-    reasons: r.reasons,
-    details: r.details,
-    masked: false,
+    input: shouldMask ? maskValue(rawInput) : rawInput,
+    type: validation.type,
+    normalized: shouldMask ? maskValue(validation.normalized ?? rawInput) : validation.normalized,
+    verdict: validation.verdict,
+    valid: validation.valid,
+    reasons: validation.reasons,
+    details: validation.details,
+    masked: shouldMask
   };
-
-  if (maskSensitive && !PUBLIC_TYPES.has(r.type)) {
-    out.input = r.input == null ? null : maskValue(r.input);
-    out.normalized = maskValue(r.normalized);
-    out.masked = true;
-  }
-
-  return out;
 }
 
 export function summarize(results) {
-  const counts = { ALLOW: 0, REVIEW: 0, BLOCK: 0 };
+  const counts = {
+    ALLOW: 0,
+    REVIEW: 0,
+    BLOCK: 0
+  };
 
-  for (const r of results) {
-    counts[r.verdict]++;
+  for (const item of results) {
+    if (counts[item.verdict] !== undefined) {
+      counts[item.verdict]++;
+    }
   }
 
-  const verdict = counts.BLOCK
-    ? 'BLOCK'
-    : counts.REVIEW
-      ? 'REVIEW'
-      : 'ALLOW';
-
   return {
-    verdict,
-    total: results.length,
-    ...counts,
+    verdict: counts.BLOCK ? 'BLOCK' : counts.REVIEW ? 'REVIEW' : 'ALLOW',
+    processed: results.length,
+    ...counts
   };
 }
