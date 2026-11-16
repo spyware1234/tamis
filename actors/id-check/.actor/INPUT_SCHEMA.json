@@ -1,0 +1,49 @@
+
+{
+  "title": "TAMIS — Vérification d'identifiants",
+  "description": "Vérifie des IBAN, BIC, SIREN, SIRET et numéros de TVA européens. Utilisez uniquement des données autorisées.",
+  "type": "object",
+  "schemaVersion": 1,
+  "properties": {
+    "items": {
+      "title": "Identifiants à vérifier",
+      "type": "array",
+      "description": "Liste des identifiants à analyser. Un identifiant par ligne.",
+      "editor": "stringList",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 100
+      },
+      "minItems": 1,
+      "maxItems": 100000
+    },
+    "type": {
+      "title": "Type d'identifiant",
+      "type": "string",
+      "description": "Choisissez le type ou laissez la détection automatique.",
+      "editor": "select",
+      "enum": ["auto", "iban", "bic", "siren", "siret", "vat"],
+      "enumTitles": ["Automatique", "IBAN", "BIC", "SIREN", "SIRET", "TVA européenne"],
+      "default": "auto"
+    },
+    "maxItems": {
+      "title": "Nombre maximal à traiter",
+      "type": "integer",
+      "description": "Pour les premiers tests, conservez 1.",
+      "default": 1,
+      "minimum": 1,
+      "maximum": 100000,
+      "editor": "number"
+    },
+    "maskSensitive": {
+      "title": "Masquer les données sensibles",
+      "type": "boolean",
+      "description": "Masque les IBAN dans les résultats.",
+      "default": true,
+      "editor": "checkbox"
+    }
+  },
+  "required": ["items"],
+  "additionalProperties": false
+}
