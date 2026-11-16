@@ -257,10 +257,10 @@ export function detectType(value) {
   const normalized = normalize(value);
 
   if (/^[A-Z]{2}\d{2}[A-Z0-9]+$/.test(normalized)) return 'iban';
+  if (/^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(normalized)) return 'bic';
   if (/^\d{14}$/.test(normalized)) return 'siret';
   if (/^\d{9}$/.test(normalized)) return 'siren';
   if (/^[A-Z]{2}[A-Z0-9]{2,13}$/.test(normalized)) return 'vat';
-  if (/^[A-Z]{4}[A-Z]{2}[A-Z0-9]{2}([A-Z0-9]{3})?$/.test(normalized)) return 'bic';
 
   return null;
 }
