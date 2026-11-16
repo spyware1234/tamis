@@ -1,0 +1,11 @@
+{
+  "name": "tamis-id-check",
+  "version": "1.1.0",
+  "description": "Offline checksum validation of IBAN, BIC, SIREN, SIRET and EU VAT numbers, with ALLOW/REVIEW/BLOCK verdicts. IBANs are masked by default.",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": { "start": "node src/main.js", "test": "node --test test/*.test.js" },
+  "engines": { "node": ">=20" },
+  "dependencies": { "apify": "^3.0.0" },
+  "license": "ISC"
+}

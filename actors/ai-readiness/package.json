@@ -1,0 +1,18 @@
+{
+  "name": "tamis-ai-readiness",
+  "version": "1.1.0",
+  "description": "Audit how ready a web page is for AI search engines and assistants: robots.txt rules per AI crawler, indexability, structured data, content signals. Scored 0-100 with prioritized fixes.",
+  "type": "module",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "node src/main.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "apify": "^3.0.0"
+  },
+  "license": "ISC",
+  "engines": {
+    "node": ">=20"
+  }
+}

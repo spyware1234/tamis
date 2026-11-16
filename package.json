@@ -1,0 +1,14 @@
+{
+  "name": "tamis",
+  "private": true,
+  "type": "module",
+  "description": "TAMIS: three Apify Actors (payment-id validator, AI-search readiness audit, email-auth audit).",
+  "scripts": {
+    "test": "node --test actors/id-check/test/*.test.js actors/ai-readiness/test/*.test.js actors/email-auth/test/*.test.js test/*.test.js",
+    "test:id-check": "cd actors/id-check && node --test test/*.test.js",
+    "test:ai-readiness": "cd actors/ai-readiness && node --test test/*.test.js",
+    "test:email-auth": "cd actors/email-auth && node --test test/*.test.js"
+  },
+  "engines": { "node": ">=20" },
+  "license": "ISC"
+}
