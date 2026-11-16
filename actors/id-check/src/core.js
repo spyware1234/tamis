@@ -13,7 +13,6 @@ const IBAN_LENGTHS = {
   TN: 24, TR: 26, UA: 29, VA: 22, VG: 24, XK: 20
 };
 
-const PUBLIC_TYPES = new Set(['SIREN', 'SIRET', 'VAT', 'BIC']);
 const LA_POSTE_SIREN = '356000000';
 
 export function normalize(raw) {
@@ -22,25 +21,15 @@ export function normalize(raw) {
     .toUpperCase();
 }
 
-function mod97(value) {
-  let remainder = 0;
-  for (const char of value) {
-    const expanded = /[A-Z]/.test(char)
-      ? String(char.charCodeAt(0) - 55)
-      : char;
-    for (const digit of expanded) {
-      remainder = (remainder * 10 + Number(digit)) % 97;
-    }
-  }
-  return remainder;
-}
+export function luhn(value) {
+  const digits = String(value);
+  if (!/^\d+$/.test(digits)) return false;
 
-function luhn(value) {
   let sum = 0;
   let doubleDigit = false;
 
-  for (let i = value.length - 1; i >= 0; i--) {
-    let digit = Number(value[i]);
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let digit = Number(digits[i]);
 
     if (doubleDigit) {
       digit *= 2;
@@ -55,7 +44,34 @@ function luhn(value) {
 }
 
 function digitSum(value) {
-  return [...value].reduce((sum, digit) => sum + Number(digit), 0);
+  return [...String(value)].reduce((sum, digit) => sum + Number(digit), 0);
+}
+
+function mod97(value) {
+  let remainder = 0;
+
+  for (const char of value) {
+    const expanded = /[A-Z]/.test(char)
+      ? String(char.charCodeAt(0) - 55)
+      : char;
+
+    for (const digit of expanded) {
+      remainder = (remainder * 10 + Number(digit)) % 97;
+    }
+  }
+
+  return remainder;
+}
+
+export function frVatKey(siren) {
+  const normalized = normalize(siren);
+
+  if (!/^\d{9}$/.test(normalized)) {
+    throw new Error('SIREN must contain exactly 9 digits');
+  }
+
+  return String((12 + 3 * (Number(normalized) % 97)) % 97)
+    .padStart(2, '0');
 }
 
 function result(type, verdict, reasons = [], details = {}) {
@@ -72,18 +88,20 @@ export function validateIban(value) {
   const iban = normalize(value);
 
   if (!/^[A-Z]{2}\d{2}[A-Z0-9]+$/.test(iban)) {
-    return result('IBAN', 'BLOCK', ['Invalid IBAN format']);
+    return result('IBAN', 'BLOCK', ['Invalid IBAN structure']);
   }
 
   const country = iban.slice(0, 2);
   const expectedLength = IBAN_LENGTHS[country];
 
   if (!expectedLength) {
-    return result('IBAN', 'REVIEW', ['Unknown country IBAN length']);
+    return result('IBAN', 'REVIEW', ['Unknown country IBAN length'], {
+      country
+    });
   }
 
   if (iban.length !== expectedLength) {
-    return result('IBAN', 'BLOCK', ['Invalid IBAN length'], {
+    return result('IBAN', 'BLOCK', ['Wrong length'], {
       expectedLength,
       actualLength: iban.length
     });
@@ -108,9 +126,15 @@ export function validateBic(value) {
     return result('BIC', 'BLOCK', ['Invalid BIC format']);
   }
 
+  const details = {};
+
+  if (bic.length === 11) {
+    details.branch = bic.slice(8, 11);
+  }
+
   return result('BIC', 'REVIEW', [
     'BIC format looks valid, but existence cannot be verified offline'
-  ]);
+  ], details);
 }
 
 export function validateSiren(value) {
@@ -124,6 +148,7 @@ export function validateSiren(value) {
     return result('SIREN', 'BLOCK', ['SIREN cannot contain only zeros']);
   }
 
+  // La Poste has a specific checksum exception.
   if (siren === LA_POSTE_SIREN) {
     return result('SIREN', 'ALLOW', [], {
       checksumValid: true,
@@ -153,14 +178,12 @@ export function validateSiret(value) {
     return result('SIRET', 'BLOCK', ['SIREN part cannot contain only zeros']);
   }
 
-  // La Poste uses a special checksum rule.
+  // Special checksum rule for La Poste.
   if (siren === LA_POSTE_SIREN) {
     const valid = luhn(siret) || digitSum(siret) % 5 === 0;
 
     if (!valid) {
-      return result('SIRET', 'BLOCK', [
-        'La Poste SIRET checksum failed'
-      ]);
+      return result('SIRET', 'BLOCK', ['La Poste SIRET checksum failed']);
     }
 
     return result('SIRET', 'ALLOW', [], {
@@ -170,18 +193,14 @@ export function validateSiret(value) {
     });
   }
 
-  // Check the SIREN part independently.
+  // Validate the SIREN component independently.
   if (!luhn(siren)) {
-    return result('SIRET', 'BLOCK', [
-      'SIREN part Luhn checksum failed'
-    ]);
+    return result('SIRET', 'BLOCK', ['SIREN part Luhn checksum failed']);
   }
 
-  // Then check the complete SIRET.
+  // Validate the complete SIRET.
   if (!luhn(siret)) {
-    return result('SIRET', 'BLOCK', [
-      'SIRET Luhn checksum failed'
-    ]);
+    return result('SIRET', 'BLOCK', ['SIRET Luhn checksum failed']);
   }
 
   return result('SIRET', 'ALLOW', [], {
@@ -201,7 +220,7 @@ export function validateVat(value) {
   const number = vat.slice(2);
 
   if (country === 'FR') {
-    if (!/^[A-Z0-9]{2}\d{9}$/.test(number)) {
+    if (!/^\d{2}\d{9}$/.test(number)) {
       return result('VAT', 'BLOCK', ['Invalid French VAT format']);
     }
 
@@ -216,11 +235,7 @@ export function validateVat(value) {
       return result('VAT', 'BLOCK', ['French VAT SIREN checksum failed']);
     }
 
-    const expectedKey = String(
-      (12 + 3 * (Number(siren) % 97)) % 97
-    ).padStart(2, '0');
-
-    if (key !== expectedKey) {
+    if (key !== frVatKey(siren)) {
       return result('VAT', 'BLOCK', ['French VAT key checksum failed']);
     }
 
@@ -256,49 +271,78 @@ export function validateItem(input, forcedType = 'auto') {
 
   if (input && typeof input === 'object' && !Array.isArray(input)) {
     value = input.value;
-    if (input.type) type = input.type;
+
+    if (input.type) {
+      type = input.type;
+    }
   }
 
   if (typeof value !== 'string' && typeof value !== 'number') {
-    return result('UNKNOWN', 'BLOCK', ['Input must be a string or number']);
+    return {
+      ...result('UNKNOWN', 'BLOCK', ['Input must be a string or number']),
+      input,
+      normalized: ''
+    };
   }
 
   const raw = String(value).trim();
+  const normalized = normalize(raw);
 
   if (!raw || raw.length > 100) {
-    return result('UNKNOWN', 'BLOCK', ['Input is empty or too long']);
+    return {
+      ...result('UNKNOWN', 'BLOCK', ['Input is empty or too long']),
+      input: raw,
+      normalized
+    };
   }
-
-  const normalized = normalize(raw);
 
   if (type === 'auto') {
     type = detectType(normalized);
   }
 
   if (!type) {
-    return result('UNKNOWN', 'REVIEW', ['Could not automatically detect identifier type']);
+    return {
+      ...result('UNKNOWN', 'REVIEW', ['Could not automatically detect identifier type']),
+      input: raw,
+      normalized
+    };
   }
 
-  switch (type.toLowerCase()) {
+  let validation;
+
+  switch (String(type).toLowerCase()) {
     case 'iban':
-      return validateIban(normalized);
+      validation = validateIban(normalized);
+      break;
     case 'bic':
-      return validateBic(normalized);
+      validation = validateBic(normalized);
+      break;
     case 'siren':
-      return validateSiren(normalized);
+      validation = validateSiren(normalized);
+      break;
     case 'siret':
-      return validateSiret(normalized);
+      validation = validateSiret(normalized);
+      break;
     case 'vat':
-      return validateVat(normalized);
+      validation = validateVat(normalized);
+      break;
     default:
-      return result('UNKNOWN', 'BLOCK', ['Unsupported identifier type']);
+      validation = result('UNKNOWN', 'BLOCK', ['Unsupported identifier type']);
   }
+
+  return {
+    ...validation,
+    input: raw,
+    normalized
+  };
 }
 
 export function maskValue(value) {
   const text = String(value ?? '');
 
-  if (text.length <= 8) return '*'.repeat(text.length);
+  if (text.length <= 8) {
+    return '*'.repeat(text.length);
+  }
 
   return `${text.slice(0, 4)}${'*'.repeat(text.length - 8)}${text.slice(-4)}`;
 }
@@ -312,7 +356,9 @@ export function toOutput(validation, index, options = {}) {
     index,
     input: shouldMask ? maskValue(rawInput) : rawInput,
     type: validation.type,
-    normalized: shouldMask ? maskValue(validation.normalized ?? rawInput) : validation.normalized,
+    normalized: shouldMask
+      ? maskValue(validation.normalized ?? rawInput)
+      : validation.normalized,
     verdict: validation.verdict,
     valid: validation.valid,
     reasons: validation.reasons,
@@ -329,7 +375,7 @@ export function summarize(results) {
   };
 
   for (const item of results) {
-    if (counts[item.verdict] !== undefined) {
+    if (Object.prototype.hasOwnProperty.call(counts, item.verdict)) {
       counts[item.verdict]++;
     }
   }
